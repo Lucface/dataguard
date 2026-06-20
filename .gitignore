@@ -1,0 +1,5 @@
+node_modules/
+*.log
+*.db
+report.html
+.DS_Store

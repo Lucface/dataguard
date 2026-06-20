@@ -1,0 +1,119 @@
+{
+  "database": {
+    "type": "neon",
+    "connectionString": "process.env.DATABASE_URL"
+  },
+  "validations": {
+    "referentialIntegrity": true,
+    "dateSequences": true,
+    "calculatedFields": true,
+    "nullAnalysis": true,
+    "businessRules": true
+  },
+  "relationships": [
+    {
+      "child": "project_tasks",
+      "parent": "projects",
+      "foreignKey": "project_id",
+      "required": true
+    },
+    {
+      "child": "project_milestones",
+      "parent": "projects",
+      "foreignKey": "project_id",
+      "required": true
+    },
+    {
+      "child": "payment_milestones",
+      "parent": "projects",
+      "foreignKey": "project_id",
+      "required": true
+    },
+    {
+      "child": "project_revisions",
+      "parent": "projects",
+      "foreignKey": "project_id",
+      "required": true
+    },
+    {
+      "child": "invoices",
+      "parent": "projects",
+      "foreignKey": "project_id",
+      "required": false
+    }
+  ],
+  "dateRules": [
+    {
+      "table": "projects",
+      "before": "start_date",
+      "after": "delivery_date",
+      "allowEqual": false,
+      "errorMessage": "Project start date must be before delivery date"
+    },
+    {
+      "table": "payment_milestones",
+      "before": "invoiced_date",
+      "after": "paid_date",
+      "allowEqual": true,
+      "errorMessage": "Invoice date must be before or equal to payment date"
+    },
+    {
+      "table": "project_revisions",
+      "before": "submitted_date",
+      "after": "feedback_date",
+      "allowEqual": false
+    }
+  ],
+  "calculations": [
+    {
+      "table": "projects",
+      "field": "spent",
+      "calculation": "SUM",
+      "sourceTable": "project_milestones",
+      "sourceField": "actual_spent",
+      "joinKey": "project_id",
+      "tolerance": 0.01
+    },
+    {
+      "table": "projects",
+      "field": "budget",
+      "calculation": "SUM",
+      "sourceTable": "payment_milestones",
+      "sourceField": "amount",
+      "joinKey": "project_id",
+      "tolerance": 0.01
+    }
+  ],
+  "nullAnalysis": {
+    "tables": ["projects", "contacts", "leads", "deals", "invoices"],
+    "requiredFields": {
+      "projects": ["name", "client", "type", "budget", "stage", "start_date"],
+      "contacts": ["name", "email", "company"],
+      "leads": ["name", "email", "company", "stage"],
+      "deals": ["title", "value", "stage"],
+      "invoices": ["invoice_number", "total_amount", "status"]
+    },
+    "completenessThreshold": 95
+  },
+  "businessRules": [
+    {
+      "name": "invoiced_projects_need_completion_date",
+      "table": "projects",
+      "condition": "stage = 'Invoiced'",
+      "requireFields": ["completed_date"],
+      "errorMessage": "Invoiced projects must have a completion date"
+    },
+    {
+      "name": "completed_projects_need_delivery",
+      "table": "projects",
+      "condition": "stage IN ('Delivered', 'Invoiced')",
+      "requireFields": ["delivery_date", "completed_date"]
+    },
+    {
+      "name": "paid_milestones_need_dates",
+      "table": "payment_milestones",
+      "condition": "status = 'paid'",
+      "requireFields": ["invoiced_date", "paid_date"]
+    }
+  ]
+}
