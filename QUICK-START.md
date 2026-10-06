@@ -1,102 +1,105 @@
 # Data Quality Tools - Quick Start
 
-Get started in 3 minutes!
+Two ways in: a throwaway SQLite file you can make in a minute, or your own database.
 
-## Step 1: Copy Example Config
+## Try it on a throwaway SQLite file
 
 ```bash
-cp ~/.claude/scripts/data-quality/example-config.json ./my-config.json
+git clone https://github.com/Lucface/dataguard.git
+cd dataguard
+bun install
+bun add better-sqlite3
 ```
 
-## Step 2: Edit Config for Your Schema
+Make a small database with one orphaned task and one project that ends before it starts:
+
+```bash
+sqlite3 demo.db "CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, start_date TEXT, end_date TEXT); CREATE TABLE tasks (id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT); INSERT INTO projects VALUES (1, 'Garden shed', '2026-01-05', '2026-02-01'), (2, 'Bike rack', '2026-03-10', '2026-03-01'); INSERT INTO tasks VALUES (1, 1, 'Cut boards'), (2, 2, 'Weld frame'), (3, 99, 'No such project');"
+```
+
+Save this as `demo-config.json`:
+
+```json
+{
+  "database": { "type": "sqlite", "connectionString": "demo.db" },
+  "validations": { "referentialIntegrity": true, "dateSequences": true },
+  "relationships": [
+    { "child": "tasks", "parent": "projects", "foreignKey": "project_id" }
+  ],
+  "dateRules": [
+    { "table": "projects", "before": "start_date", "after": "end_date" }
+  ]
+}
+```
+
+Run it:
+
+```bash
+bunx tsx cli.ts --config demo-config.json
+```
+
+The report ends with what it found, and the command exits with code 1 because a check failed:
+
+```
+❌ REFERENTIAL INTEGRITY
+
+  Errors:
+    - Found 1 orphaned records in tasks (missing parent in projects)
+
+❌ DATE SEQUENCES
+
+  Errors:
+    - Found 1 date sequence violation(s) in projects: start_date should be before end_date
+    -   Example: ID 2 - start_date=2026-03-10, end_date=2026-03-01
+```
+
+## Use your own database
+
+### Step 1: Copy Example Config
+
+```bash
+cp example-config.json my-config.json
+```
+
+### Step 2: Edit Config for Your Schema
+
+Change the table and column names in `my-config.json` to yours, and set the database:
 
 ```json
 {
   "database": {
     "type": "neon",
-    "connectionString": "postgresql://user:pass@host/db"
-  },
-  "tables": {
-    "projects": {
-      "calculated": {
-        "spent": {
-          "source": "SELECT SUM(actual_spent) FROM milestones WHERE project_id = $1",
-          "field": "spent"
-        }
-      }
-    }
-  },
-  "relationships": [
-    {
-      "child": "tasks",
-      "parent": "projects",
-      "foreignKey": "project_id"
-    }
-  ]
+    "connectionString": "process.env.DATABASE_URL"
+  }
 }
 ```
 
-## Step 3: Run Validation
+`type` is `neon`, `postgres` or `sqlite`. For `postgres` run `bun add pg` first; for `sqlite` run `bun add better-sqlite3` and put the file path in `connectionString`. The full config shape is in [README.md](README.md#configuration).
+
+### Step 3: Run Validation
 
 ```bash
-npx tsx ~/.claude/scripts/data-quality/cli.ts --config my-config.json
-```
-
-## Output
-
-```
-🔍 Data Quality Analysis Report
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Overall Quality Score: 95/100 (Grade: A)
-
-✅ Referential Integrity: PASS (0 violations)
-✅ Date Sequences: PASS (0 violations)
-⚠️  Calculated Fields: WARNING (3 discrepancies)
-✅ Null Analysis: PASS (98% complete)
-✅ Business Rules: PASS (all valid)
-
-Total Issues: 3 (all fixable)
+bunx tsx cli.ts --config my-config.json
 ```
 
 ## Common Commands
 
 ```bash
 # HTML report
-npx tsx ~/.claude/scripts/data-quality/cli.ts --format html --output report.html
+bunx tsx cli.ts --config my-config.json --output report.html
 
-# JSON output
-npx tsx ~/.claude/scripts/data-quality/cli.ts --format json > data.json
+# JSON report
+bunx tsx cli.ts --config my-config.json --output report.json
 
 # Specific validator
-npx tsx ~/.claude/scripts/data-quality/cli.ts --only referential-integrity
+bunx tsx cli.ts --config my-config.json --only referential-integrity
 
-# Verbose output
-npx tsx ~/.claude/scripts/data-quality/cli.ts --verbose
-```
-
-## Shell Alias (Optional)
-
-```bash
-# Add to ~/.zshrc or ~/.bashrc
-alias dq='npx tsx ~/.claude/scripts/data-quality/cli.ts'
-
-# Then use:
-dq --config my-config.json
-dq --format html
+# Every option
+bunx tsx cli.ts --help
 ```
 
 ## Need Help?
 
-```bash
-# Full documentation
-cat ~/.claude/scripts/data-quality/README.md
-
-# Usage examples
-cat ~/.claude/scripts/data-quality/USAGE-EXAMPLES.md
-
-# Quick reference
-cat ~/.claude/scripts/data-quality/QUICK-REFERENCE.md
-```
-
-That's it! You're validating data quality across any project. 🎉
+- [README.md](README.md): every check, the config shape and the known limits
+- [USAGE-EXAMPLES.md](USAGE-EXAMPLES.md): longer examples
+- [QUICK-REFERENCE.md](QUICK-REFERENCE.md): one-page reference

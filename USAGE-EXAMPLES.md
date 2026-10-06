@@ -1,5 +1,7 @@
 # Data Quality Tools - Usage Examples
 
+Some checks have known limits. Read [Known limits](README.md#known-limits) before relying on calculated fields, null analysis or business rules.
+
 ## Quick Start
 
 ### 1. CLI Usage (Simplest)
@@ -26,16 +28,16 @@ cat > data-quality-config.json << EOF
 EOF
 
 # Run validations
-npx tsx ~/.claude/scripts/data-quality/cli.ts
+bunx tsx cli.ts
 
 # Generate HTML report
-npx tsx ~/.claude/scripts/data-quality/cli.ts --format html --output quality-report.html
+bunx tsx cli.ts --format html --output quality-report.html
 ```
 
 ### 2. Programmatic Usage (TypeScript/JavaScript)
 
 ```typescript
-import { generateQualityReport, createAdapter } from '~/.claude/scripts/data-quality';
+import { generateQualityReport, createAdapter } from './index';
 
 async function checkDataQuality() {
   const adapter = createAdapter({
@@ -77,7 +79,7 @@ import {
   validateDateSequences,
   validateCalculatedFields,
   createAdapter
-} from '~/.claude/scripts/data-quality';
+} from './index';
 
 const adapter = createAdapter({
   type: 'neon',
@@ -265,7 +267,7 @@ const crmConfig = {
 ### Auto-detect Database Relationships
 
 ```typescript
-import { detectRelationships, createAdapter } from '~/.claude/scripts/data-quality';
+import { detectRelationships, createAdapter } from './index';
 
 const adapter = createAdapter({
   type: 'postgres',
@@ -280,7 +282,7 @@ console.log('Found relationships:', relationships);
 ### Validate Specific Areas Only
 
 ```typescript
-import { validateDateSequences, createAdapter } from '~/.claude/scripts/data-quality';
+import { validateDateSequences, createAdapter } from './index';
 
 const adapter = createAdapter({
   type: 'neon',
@@ -305,7 +307,7 @@ if (!result.passed) {
 ### Analyze Null Patterns
 
 ```typescript
-import { analyzeNulls, generateNullReport, createAdapter } from '~/.claude/scripts/data-quality';
+import { analyzeNulls, generateNullReport, createAdapter } from './index';
 
 const adapter = createAdapter({
   type: 'neon',
@@ -342,23 +344,23 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun add tsx
+        run: bun install
 
       - name: Run data quality checks
-        run: bun x tsx ~/.claude/scripts/data-quality/cli.ts --format json --output report.json
+        run: bunx tsx cli.ts --format json --output report.json
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Upload report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: data-quality-report
           path: report.json
@@ -372,14 +374,14 @@ jobs:
           fi
 ```
 
-### Add to npm scripts
+### Add to package.json scripts
 
 ```json
 {
   "scripts": {
-    "db:validate": "tsx ~/.claude/scripts/data-quality/cli.ts",
-    "db:report": "tsx ~/.claude/scripts/data-quality/cli.ts --format html --output reports/data-quality.html",
-    "db:check:quick": "tsx ~/.claude/scripts/data-quality/cli.ts --only referential-integrity"
+    "db:validate": "tsx cli.ts",
+    "db:report": "tsx cli.ts --format html --output reports/data-quality.html",
+    "db:check:quick": "tsx cli.ts --only referential-integrity"
   }
 }
 ```
@@ -388,7 +390,7 @@ jobs:
 
 ```typescript
 // scripts/pre-deploy.ts
-import { generateQualityReport, createAdapter } from '~/.claude/scripts/data-quality';
+import { generateQualityReport, createAdapter } from './index';
 import config from './data-quality-config.json';
 
 async function preDeploymentCheck() {

@@ -3,29 +3,31 @@
 ## One-Liners
 
 ```bash
+# These read data-quality-config.json from the current folder unless --config is given
+
 # Run all validations
-bun x tsx ~/.claude/scripts/data-quality/cli.ts
+bunx tsx cli.ts
 
 # Generate HTML report
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --format html --output report.html
+bunx tsx cli.ts --format html --output report.html
 
 # Check only referential integrity
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --only referential-integrity
+bunx tsx cli.ts --only referential-integrity
 
 # Check only date sequences
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --only date-sequences
+bunx tsx cli.ts --only date-sequences
 
 # Check only calculated fields
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --only calculated-fields
+bunx tsx cli.ts --only calculated-fields
 
 # Check only null analysis
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --only null-analysis
+bunx tsx cli.ts --only null-analysis
 
 # Check only business rules
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --only business-rules
+bunx tsx cli.ts --only business-rules
 
 # Use custom config
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --config ./my-config.json
+bunx tsx cli.ts --config ./my-config.json
 ```
 
 ## Minimal Config Template
@@ -79,7 +81,7 @@ bun x tsx ~/.claude/scripts/data-quality/cli.ts --config ./my-config.json
 ## Programmatic Usage
 
 ```typescript
-import { generateQualityReport, createAdapter } from '~/.claude/scripts/data-quality';
+import { generateQualityReport, createAdapter } from './index';
 
 const adapter = createAdapter({
   type: 'neon',
@@ -173,7 +175,7 @@ await adapter.disconnect();
 ```yaml
 # .github/workflows/data-quality.yml
 - name: Data Quality Check
-  run: bun x tsx ~/.claude/scripts/data-quality/cli.ts --format json --output report.json
+  run: bunx tsx cli.ts --format json --output report.json
   env:
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
@@ -181,11 +183,11 @@ await adapter.disconnect();
 ## File Locations
 
 ```
-~/.claude/scripts/data-quality/
+dataguard/
 ├── README.md                           # Full documentation
-├── USAGE-EXAMPLES.md                   # Real-world examples
+├── QUICK-START.md                      # First run
+├── USAGE-EXAMPLES.md                   # Longer examples
 ├── QUICK-REFERENCE.md                  # This file
-├── EXTRACTION-SUMMARY.md               # Project history
 ├── types.ts                            # TypeScript types
 ├── adapters.ts                         # Database adapters
 ├── validate-referential-integrity.ts   # Foreign key validation
@@ -197,18 +199,19 @@ await adapter.disconnect();
 ├── cli.ts                              # Command-line interface
 ├── index.ts                            # Main entry point
 ├── example-config.json                 # Config template
-└── package.json                        # NPM package definition
+├── package.json                        # Package definition
+└── LICENSE                             # MIT
 ```
 
 ## Help
 
 ```bash
 # Show CLI help
-bun x tsx ~/.claude/scripts/data-quality/cli.ts --help
+bunx tsx cli.ts --help
 
 # Read full documentation
-cat ~/.claude/scripts/data-quality/README.md
+cat README.md
 
 # See usage examples
-cat ~/.claude/scripts/data-quality/USAGE-EXAMPLES.md
+cat USAGE-EXAMPLES.md
 ```
