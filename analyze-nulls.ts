@@ -102,30 +102,42 @@ export async function analyzeNulls(
 }
 
 async function getTableColumns(adapter: DatabaseAdapter, table: string): Promise<Array<{ name: string; type: string }>> {
-  const query = `
-    SELECT column_name, data_type
-    FROM information_schema.columns
-    WHERE table_name = '${table}'
-    ORDER BY ordinal_position
-  `;
+  for (const schemaCondition of [' AND table_schema = current_schema()', '']) {
+    const query = `
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = '${table}'${schemaCondition}
+      ORDER BY ordinal_position
+    `;
+
+    try {
+      const result = await adapter.execute(query);
+      if (result.rows.length === 0) continue;
+      const columns = result.rows.map((row: { column_name: string; data_type: string }) => ({
+        name: row.column_name,
+        type: row.data_type
+      }));
+      if (schemaCondition) return columns;
+      const seen = new Set<string>();
+      return columns.filter(column => {
+        if (seen.has(column.name)) return false;
+        seen.add(column.name);
+        return true;
+      });
+    } catch {
+      // Try the next column metadata query.
+    }
+  }
 
   try {
-    const result = await adapter.execute(query);
-    return result.rows.map((row: { column_name: string; data_type: string }) => ({
-      name: row.column_name,
-      type: row.data_type
+    const result = await adapter.execute(`SELECT name, type FROM pragma_table_info('${table}')`);
+    return result.rows.map((row: { name: string; type: string }) => ({
+      name: row.name,
+      type: row.type
     }));
-  } catch {
-    try {
-      const result = await adapter.execute(`SELECT name, type FROM pragma_table_info('${table}')`);
-      return result.rows.map((row: { name: string; type: string }) => ({
-        name: row.name,
-        type: row.type
-      }));
-    } catch (error) {
-      console.warn(`Could not get columns for ${table}:`, error);
-      return [];
-    }
+  } catch (error) {
+    console.warn(`Could not get columns for ${table}:`, error);
+    return [];
   }
 }
 

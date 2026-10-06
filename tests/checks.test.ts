@@ -14,14 +14,13 @@ import { validateReferentialIntegrity } from '../validate-referential-integrity'
 import type { CalculationConfig, DatabaseAdapter, NullAnalysisConfig } from '../types';
 
 const sample = readFileSync(join(__dirname, 'fixtures', 'sample.sql'), 'utf8');
-const fixtureTables = [
-  'projects', 'project_tasks', 'project_milestones', 'payment_milestones',
-  'project_revisions', 'invoices', 'contacts', 'leads', 'deals',
-  'bulk_events', 'bulk_parents', 'bulk_children'
-];
 const temporaryDirectories: string[] = [];
 
-async function createTestAdapter(type: 'sqlite' | 'postgres'): Promise<DatabaseAdapter> {
+function withSearchPath(url: string, name: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}options=-c%20search_path%3D${name}`;
+}
+
+async function createTestAdapter(type: 'sqlite' | 'postgres', schema: string): Promise<DatabaseAdapter> {
   if (type === 'sqlite') {
     const directory = mkdtempSync(join(tmpdir(), 'dataguard-test-'));
     temporaryDirectories.push(directory);
@@ -40,12 +39,13 @@ async function createTestAdapter(type: 'sqlite' | 'postgres'): Promise<DatabaseA
   const client = new Client({ connectionString: url });
   try {
     await client.connect();
-    await client.query(`DROP TABLE IF EXISTS ${fixtureTables.join(', ')} CASCADE`);
+    await client.query(`CREATE SCHEMA ${schema}`);
+    await client.query(`SET search_path TO ${schema}`);
     await client.query(sample);
   } finally {
     await client.end();
   }
-  return createAdapter({ type: 'postgres', connectionString: url });
+  return createAdapter({ type: 'postgres', connectionString: withSearchPath(url, schema) });
 }
 
 after(() => {
@@ -86,16 +86,28 @@ for (const type of ['sqlite', 'postgres'] as const) {
   describe(type, {
     concurrency: false,
     skip: type === 'postgres' && !process.env.DATAGUARD_TEST_PG_URL
-      ? 'set DATAGUARD_TEST_PG_URL to an empty throwaway database to run these'
+      ? 'set DATAGUARD_TEST_PG_URL to a throwaway database to run these; the tests create and remove their own schema'
       : false
   }, () => {
+    const schema = `dataguard_test_${process.pid}_${Date.now()}`;
     let adapter: DatabaseAdapter;
 
     before(async () => {
-      adapter = await createTestAdapter(type);
+      adapter = await createTestAdapter(type, schema);
     });
     after(async () => {
       await adapter?.disconnect();
+      if (type === 'postgres') {
+        const url = process.env.DATAGUARD_TEST_PG_URL;
+        assert.ok(url);
+        const client = new Client({ connectionString: url });
+        try {
+          await client.connect();
+          await client.query(`DROP SCHEMA ${schema} CASCADE`);
+        } finally {
+          await client.end();
+        }
+      }
     });
     beforeEach(context => {
       context.mock.method(console, 'log', () => {});
@@ -280,6 +292,29 @@ for (const type of ['sqlite', 'postgres'] as const) {
       assert.equal(result.completenessScore, 0);
     });
 
+    if (type === 'postgres') {
+      it('analyzes only contacts columns from the current schema', async () => {
+        // source: review of this branch, information_schema read same-named tables from every schema
+        const url = process.env.DATAGUARD_TEST_PG_URL;
+        assert.ok(url);
+        const otherSchema = `${schema}_other`;
+        const client = new Client({ connectionString: url });
+        try {
+          await client.connect();
+          await client.query(`CREATE SCHEMA ${otherSchema}`);
+          try {
+            await client.query(`CREATE TABLE ${otherSchema}.contacts (id INTEGER, name TEXT, email TEXT, company TEXT, extra_column TEXT)`);
+            const result = await analyzeNulls(adapter, { tables: ['contacts'] });
+            assert.deepEqual(result.fieldAnalysis?.map(field => field.field), ['id', 'name', 'email', 'company']);
+          } finally {
+            await client.query(`DROP SCHEMA ${otherSchema} CASCADE`);
+          }
+        } finally {
+          await client.end();
+        }
+      });
+    }
+
     it('does not label partially populated sample columns as always null', async () => {
       // source: null analysis contract, always-null detection uses column names and portable conditional sums.
       assert.deepEqual(await findAlwaysNullFields(adapter, 'projects'), []);
@@ -379,6 +414,24 @@ for (const type of ['sqlite', 'postgres'] as const) {
       });
     });
 
+    it('reports one-sided budget range violations without undefined bounds', async () => {
+      // source: review of this branch, one-sided ranges printed undefined in the message
+      const minimum = await validateBusinessRules({
+        adapter,
+        rules: [createValueRangeRule({ table: 'projects', field: 'budget', min: 400 })]
+      });
+      assert.deepEqual(minimum, {
+        passed: false, errors: ['Field budget must be at least 400'], warnings: []
+      });
+      const maximum = await validateBusinessRules({
+        adapter,
+        rules: [createValueRangeRule({ table: 'projects', field: 'budget', max: 600 })]
+      });
+      assert.deepEqual(maximum, {
+        passed: false, errors: ['Field budget must be at most 600'], warnings: []
+      });
+    });
+
     it('honors value range boundaries, numeric strings and allowNull', () => {
       // source: value range contract, nullable values and optional inclusive bounds must be evaluated explicitly.
       const rule = createValueRangeRule({ table: 'projects', field: 'budget', min: 0, max: 600 });
@@ -423,7 +476,10 @@ for (const type of ['sqlite', 'postgres'] as const) {
     if (type === 'sqlite') {
       it('executes statements without result rows', async () => {
         // source: 2026-10-06 measurement, SQLite .all() threw for CREATE TABLE statements.
-        const result = await adapter.execute('CREATE TABLE scratch (id INTEGER)');
+        let result!: Awaited<ReturnType<DatabaseAdapter['execute']>>;
+        await assert.doesNotReject(async () => {
+          result = await adapter.execute('CREATE TABLE scratch (id INTEGER)');
+        });
         assert.deepEqual(result.rows, []);
         assert.deepEqual((await adapter.execute('SELECT id FROM scratch')).rows, []);
       });

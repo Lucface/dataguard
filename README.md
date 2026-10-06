@@ -292,7 +292,7 @@ jobs:
 bun run test
 ```
 
-The tests run every check against a small made-up sample (`tests/fixtures/sample.sql`) on SQLite. To run them on PostgreSQL too, point `DATAGUARD_TEST_PG_URL` at an empty, throwaway database:
+The tests run every check against a small made-up sample (`tests/fixtures/sample.sql`) on SQLite. To run them on PostgreSQL too, point `DATAGUARD_TEST_PG_URL` at a throwaway database. The tests create a schema of their own, load the sample there, and remove that schema when they finish; nothing else in the database is touched:
 
 ```bash
 DATAGUARD_TEST_PG_URL=postgresql://localhost/dataguard_test bun run test

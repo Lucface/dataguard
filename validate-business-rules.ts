@@ -172,7 +172,13 @@ export function createValueRangeRule(config: {
       return (config.min === undefined || n >= config.min) &&
         (config.max === undefined || n <= config.max);
     },
-    errorMessage: `Field ${config.field} must be between ${config.min} and ${config.max}`
+    errorMessage: config.min !== undefined
+      ? config.max !== undefined
+        ? `Field ${config.field} must be between ${config.min} and ${config.max}`
+        : `Field ${config.field} must be at least ${config.min}`
+      : config.max !== undefined
+        ? `Field ${config.field} must be at most ${config.max}`
+        : `Field ${config.field} must be set`
   };
 }
 
