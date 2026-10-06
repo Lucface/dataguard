@@ -6,6 +6,7 @@
  */
 
 import type { ValidationResult, CalculationConfig, DatabaseAdapter } from './types';
+import { formatValue } from './validate-date-sequences';
 
 export interface CalculatedFieldsConfig {
   calculations: CalculationConfig[];
@@ -63,39 +64,41 @@ async function validateSingleCalculation(
   const aggExpr = buildAggregationExpression(calc);
 
   // Build the filter clause if provided
-  const filterClause = calc.filter ? `AND ${calc.filter}` : '';
+  const filterClause = calc.filter ? ` AND (${calc.filter})` : '';
 
   // Build join condition
+  const parentKey = calc.parentKey || 'id';
   const joinKey = calc.joinKey || 'id';
 
   const query = `
     SELECT
-      t.id,
+      t.${parentKey} AS id,
       t.${calc.field} as recorded_value,
       COALESCE(${aggExpr}, 0) as calculated_value,
       ABS(t.${calc.field} - COALESCE(${aggExpr}, 0)) as discrepancy
     FROM ${calc.table} t
-    LEFT JOIN ${calc.sourceTable} s ON t.${joinKey} = s.${joinKey}
-    GROUP BY t.id, t.${calc.field}
+    LEFT JOIN ${calc.sourceTable} s ON t.${parentKey} = s.${joinKey}${filterClause}
+    GROUP BY t.${parentKey}, t.${calc.field}
     HAVING ABS(t.${calc.field} - COALESCE(${aggExpr}, 0)) > ${tolerance}
-    LIMIT 10
   `;
 
   try {
-    const result = await adapter.execute(query);
+    const countResult = await adapter.execute(`SELECT COUNT(*) AS count FROM (${query}) d`);
+    const count = Number(countResult.rows[0].count);
 
-    if (result.rows.length > 0) {
+    if (count > 0) {
+      const result = await adapter.execute(`${query} ORDER BY id LIMIT 3`);
       errors.push(
-        `Found ${result.rows.length} discrepancies in ${calc.table}.${calc.field} ` +
+        `Found ${count} discrepancies in ${calc.table}.${calc.field} ` +
         `(expected ${calc.calculation} of ${calc.sourceTable}.${calc.sourceField})`
       );
 
-      result.rows.slice(0, 3).forEach((row: any) => {
+      for (const row of result.rows) {
         errors.push(
-          `  Example: ID ${row.id} - Recorded=${row.recorded_value}, ` +
-          `Calculated=${row.calculated_value}, Diff=${row.discrepancy}`
+          `  Example: ID ${formatValue(row.id)} - Recorded=${formatValue(row.recorded_value)}, ` +
+          `Calculated=${formatValue(row.calculated_value)}, Diff=${formatValue(row.discrepancy)}`
         );
-      });
+      }
     }
 
     return {

@@ -38,13 +38,18 @@ export async function analyzeNulls(
     for (const table of config.tables) {
       // Get all columns for this table
       const columns = await getTableColumns(adapter, table);
+      if (columns.length === 0) {
+        errors.push(`Could not read the columns of ${table}`);
+        continue;
+      }
 
       for (const column of columns) {
         const analysis = await analyzeField(
           adapter,
           table,
-          column,
-          config.requiredFields?.[table]?.includes(column) || false
+          column.name,
+          column.type,
+          config.requiredFields?.[table]?.includes(column.name) || false
         );
 
         fieldAnalysis.push(analysis);
@@ -52,13 +57,13 @@ export async function analyzeNulls(
         // Check if required field has nulls
         if (analysis.required && (analysis.nullCount > 0 || analysis.emptyCount > 0)) {
           errors.push(
-            `Required field ${table}.${column} has ${analysis.nullCount + analysis.emptyCount} null/empty values`
+            `Required field ${table}.${column.name} has ${analysis.nullCount + analysis.emptyCount} null/empty values`
           );
         }
 
         // Check if completeness is below threshold
         if (analysis.completeness < threshold) {
-          const message = `Field ${table}.${column} is only ${analysis.completeness.toFixed(1)}% complete (threshold: ${threshold}%)`;
+          const message = `Field ${table}.${column.name} is only ${analysis.completeness.toFixed(1)}% complete (threshold: ${threshold}%)`;
 
           if (analysis.required) {
             errors.push(message);
@@ -72,7 +77,7 @@ export async function analyzeNulls(
     // Calculate overall completeness score
     const completenessScore = fieldAnalysis.length > 0
       ? fieldAnalysis.reduce((sum, f) => sum + f.completeness, 0) / fieldAnalysis.length
-      : 100;
+      : errors.length > 0 ? 0 : 100;
 
     console.log(`   Overall Data Completeness: ${completenessScore.toFixed(1)}%`);
 
@@ -96,9 +101,9 @@ export async function analyzeNulls(
   }
 }
 
-async function getTableColumns(adapter: DatabaseAdapter, table: string): Promise<string[]> {
+async function getTableColumns(adapter: DatabaseAdapter, table: string): Promise<Array<{ name: string; type: string }>> {
   const query = `
-    SELECT column_name
+    SELECT column_name, data_type
     FROM information_schema.columns
     WHERE table_name = '${table}'
     ORDER BY ordinal_position
@@ -106,10 +111,21 @@ async function getTableColumns(adapter: DatabaseAdapter, table: string): Promise
 
   try {
     const result = await adapter.execute(query);
-    return result.rows.map((row: any) => row.column_name);
-  } catch (error) {
-    console.warn(`Could not get columns for ${table}:`, error);
-    return [];
+    return result.rows.map((row: { column_name: string; data_type: string }) => ({
+      name: row.column_name,
+      type: row.data_type
+    }));
+  } catch {
+    try {
+      const result = await adapter.execute(`SELECT name, type FROM pragma_table_info('${table}')`);
+      return result.rows.map((row: { name: string; type: string }) => ({
+        name: row.name,
+        type: row.type
+      }));
+    } catch (error) {
+      console.warn(`Could not get columns for ${table}:`, error);
+      return [];
+    }
   }
 }
 
@@ -117,13 +133,17 @@ async function analyzeField(
   adapter: DatabaseAdapter,
   table: string,
   field: string,
+  type: string,
   required: boolean
 ): Promise<FieldNullAnalysis> {
+  const emptyExpression = /char|text|clob|string/i.test(type)
+    ? `SUM(CASE WHEN ${field} = '' THEN 1 ELSE 0 END)`
+    : '0';
   const query = `
     SELECT
       COUNT(*) as total_count,
-      COUNT(*) FILTER (WHERE ${field} IS NULL) as null_count,
-      COUNT(*) FILTER (WHERE ${field} = '') as empty_count
+      SUM(CASE WHEN ${field} IS NULL THEN 1 ELSE 0 END) as null_count,
+      ${emptyExpression} as empty_count
     FROM ${table}
   `;
 
@@ -131,8 +151,8 @@ async function analyzeField(
   const row = result.rows[0];
 
   const totalCount = Number(row.total_count);
-  const nullCount = Number(row.null_count);
-  const emptyCount = Number(row.empty_count);
+  const nullCount = Number(row.null_count ?? 0);
+  const emptyCount = Number(row.empty_count ?? 0);
   const completeCount = totalCount - nullCount - emptyCount;
   const completeness = totalCount > 0 ? (completeCount / totalCount) * 100 : 100;
 
@@ -269,16 +289,16 @@ export async function findAlwaysNullFields(
 
   for (const column of columns) {
     const query = `
-      SELECT COUNT(*) FILTER (WHERE ${column} IS NOT NULL) as non_null_count
+      SELECT SUM(CASE WHEN ${column.name} IS NOT NULL THEN 1 ELSE 0 END) as non_null_count
       FROM ${table}
     `;
 
     try {
       const result = await adapter.execute(query);
-      const nonNullCount = Number(result.rows[0].non_null_count);
+      const nonNullCount = Number(result.rows[0].non_null_count ?? 0);
 
       if (nonNullCount === 0) {
-        alwaysNull.push(column);
+        alwaysNull.push(column.name);
       }
     } catch (error) {
       // Skip columns that cause errors (e.g., complex types)

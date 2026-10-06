@@ -7,6 +7,20 @@
 
 import type { ValidationResult, DateRuleConfig, DatabaseAdapter } from './types';
 
+export function formatValue(value: unknown): string {
+  if (value instanceof Date) {
+    if (value.getHours() === 0 && value.getMinutes() === 0 &&
+        value.getSeconds() === 0 && value.getMilliseconds() === 0) {
+      const year = String(value.getFullYear()).padStart(4, '0');
+      const month = String(value.getMonth() + 1).padStart(2, '0');
+      const day = String(value.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    return value.toISOString();
+  }
+  return String(value);
+}
+
 export interface DateSequenceConfig {
   rules: DateRuleConfig[];
   adapter: DatabaseAdapter;
@@ -23,35 +37,33 @@ export async function validateDateSequences(
 
   try {
     for (const rule of config.rules) {
-      const operator = rule.allowEqual ? '>=' : '>';
-      const query = `
-        SELECT
-          COUNT(*) as count,
-          id,
-          ${rule.before},
-          ${rule.after}
+      const operator = rule.allowEqual === false ? '>=' : '>';
+      const fromWhere = `
         FROM ${rule.table}
         WHERE ${rule.before} IS NOT NULL
           AND ${rule.after} IS NOT NULL
           AND ${rule.before} ${operator} ${rule.after}
-        GROUP BY id, ${rule.before}, ${rule.after}
-        LIMIT 10
       `;
 
-      const result = await config.adapter.execute(query);
-      const violationCount = result.rows.length;
+      const countResult = await config.adapter.execute(`SELECT COUNT(*) AS count ${fromWhere}`);
+      const violationCount = Number(countResult.rows[0].count);
 
       if (violationCount > 0) {
+        const result = await config.adapter.execute(`
+          SELECT id, ${rule.before}, ${rule.after}
+          ${fromWhere}
+          ORDER BY id LIMIT 3
+        `);
         const message = rule.errorMessage ||
           `Found ${violationCount} date sequence violation(s) in ${rule.table}: ${rule.before} should be before ${rule.after}`;
         errors.push(message);
 
         // Log examples
-        result.rows.slice(0, 3).forEach((row: any) => {
+        for (const row of result.rows) {
           errors.push(
-            `  Example: ID ${row.id} - ${rule.before}=${row[rule.before]}, ${rule.after}=${row[rule.after]}`
+            `  Example: ID ${formatValue(row.id)} - ${rule.before}=${formatValue(row[rule.before])}, ${rule.after}=${formatValue(row[rule.after])}`
           );
-        });
+        }
       }
     }
 
