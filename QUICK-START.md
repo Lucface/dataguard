@@ -8,7 +8,6 @@ Two ways in: a throwaway SQLite file you can make in a minute, or your own datab
 git clone https://github.com/Lucface/dataguard.git
 cd dataguard
 bun install
-bun add better-sqlite3
 ```
 
 Make a small database with one orphaned task and one project that ends before it starts:
@@ -74,7 +73,7 @@ Change the table and column names in `my-config.json` to yours, and set the data
 }
 ```
 
-`type` is `neon`, `postgres` or `sqlite`. For `postgres` run `bun add pg` first; for `sqlite` run `bun add better-sqlite3` and put the file path in `connectionString`. The full config shape is in [README.md](README.md#configuration).
+`type` is `neon`, `postgres` or `sqlite`; for SQLite, `connectionString` is the path to the file. `bun install` already brought all three drivers. The full config shape is in [README.md](README.md#configuration).
 
 ### Step 3: Run Validation
 

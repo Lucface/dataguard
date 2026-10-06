@@ -64,6 +64,7 @@ const result = await validateReferentialIntegrity({
 - Ensures start dates precede end dates
 - Validates sequential date progressions (`validateSequentialProgression`)
 - Validates business workflow dates (e.g., invoiced before paid)
+- Equal dates pass unless a rule sets `allowEqual: false`
 
 **Usage:**
 ```typescript
@@ -106,7 +107,7 @@ const result = await validateCalculatedFields({
 });
 ```
 
-`joinKey` must be a column that exists under the same name in both tables. See [Known limits](#known-limits).
+`joinKey` is the column in `sourceTable` that points at `table`, and `parentKey` (default `id`) is the column in `table` it points at. `filter` limits which source rows count, for example `"filter": "s.status = 'paid'"`; put `s.` in front of a column that both tables have. Parents with no matching rows count as 0.
 
 ### 4. `analyze-nulls.ts`
 **Purpose:** Analyzes null/empty field patterns and completeness
@@ -179,13 +180,15 @@ await adapter.disconnect();
 
 ## Database Adapters
 
-`bun install` brings the Neon driver. The other databases need their driver added once:
+`bun install` brings the drivers for all three databases the CLI can open:
 
 | `database.type` | Database | Driver |
 |---|---|---|
 | `neon` | Neon Serverless (PostgreSQL) | included |
-| `postgres` | PostgreSQL | `bun add pg` |
-| `sqlite` | SQLite, `connectionString` is the path to the file | `bun add better-sqlite3` |
+| `postgres` | PostgreSQL | included (`pg`) |
+| `sqlite` | SQLite, `connectionString` is the path to the file | included (`better-sqlite3`) |
+
+`pg` and `better-sqlite3` are optional dependencies: if one cannot install on your machine, `bun install` skips it and the other databases still work.
 
 From code, `createAdapter` also accepts `neon-pool` (needs `ws`), `mysql` (needs `mysql2` and a `connectionConfig` object) and `drizzle` (pass your Drizzle `db`). The CLI passes only `connectionString`, so it cannot open a MySQL or Drizzle connection.
 
@@ -283,17 +286,17 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
 
-## Known limits
+## Tests
 
-Measured on 2026-10-06 against PostgreSQL 17 and SQLite with a made-up sample.
+```bash
+bun run test
+```
 
-- **Calculated fields** join the two tables on one column name (`joinKey`) used on both sides. A parent keyed by `id` with children keyed by `project_id` fails with "column does not exist". The `filter` option is not applied.
-- **Business rules** with `requireFields` or `forbidFields` fail on PostgreSQL with a GROUP BY error. On SQLite each one reports a violation whether or not a row breaks the rule.
-- **Null analysis** fails on PostgreSQL when a table has a column that is not text. On SQLite it cannot read the column list and reports that all checks passed.
-- **Date rules**: `allowEqual` works backwards. Equal dates are flagged when it is `true` and accepted when it is `false` or left out.
-- A rule made by `createValueRangeRule` is never evaluated.
+The tests run every check against a small made-up sample (`tests/fixtures/sample.sql`) on SQLite. To run them on PostgreSQL too, point `DATAGUARD_TEST_PG_URL` at an empty, throwaway database:
 
-Referential integrity and date order (without `allowEqual`) return correct results on both databases. To get a report made only of those two, set `calculatedFields`, `nullAnalysis` and `businessRules` to `false` under `validations`, as [QUICK-START.md](QUICK-START.md) does.
+```bash
+DATAGUARD_TEST_PG_URL=postgresql://localhost/dataguard_test bun run test
+```
 
 ## Extending the Tools
 
