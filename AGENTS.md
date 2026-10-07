@@ -4,7 +4,7 @@ Global preferences live in `~/.claude/CLAUDE.md`. This file defines project-spec
 
 ## Project Context
 
-Generic, reusable data quality validation tools extracted from the AcmeCRM project. This directory contains schema-agnostic data quality validation utilities that can be adapted to any database project. These tools were originally developed for the AcmeCRM but have been generalized for broader use.
+Generic, reusable data quality validation tools extracted from the AcmeCRM project. This directory contains schema-agnostic data quality validation utilities that you configure for your own tables on PostgreSQL (including Neon) and SQLite. These tools were originally developed for the AcmeCRM but have been generalized for broader use.
 
 - Detected top-level config: `package.json`.
 - Package scripts: `check`, `report`, `validate`, `validate:quick`.

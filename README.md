@@ -4,7 +4,7 @@ Generic, reusable data quality validation tools extracted from the AcmeCRM proje
 
 ## Overview
 
-This directory contains schema-agnostic data quality validation utilities that can be adapted to any database project. These tools were originally developed for the AcmeCRM but have been generalized for broader use.
+This directory contains schema-agnostic data quality validation utilities that you configure for your own tables on PostgreSQL (including Neon) and SQLite. These tools were originally developed for the AcmeCRM but have been generalized for broader use.
 
 ## Quick start
 

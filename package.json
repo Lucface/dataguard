@@ -1,7 +1,7 @@
 {
   "name": "dataguard",
   "version": "1.0.0",
-  "description": "DataGuard — schema-agnostic data-quality validation for any SQL database (referential integrity, date sequences, calculated fields, null analysis, business rules).",
+  "description": "Schema-agnostic data-quality checks for PostgreSQL (including Neon) and SQLite: referential integrity, date sequences, calculated fields, null analysis, business rules.",
   "main": "index.ts",
   "bin": {
     "data-quality": "./cli.ts"
