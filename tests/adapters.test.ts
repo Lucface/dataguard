@@ -34,7 +34,7 @@ function missingDatabaseMessage(filepath: string): string {
 }
 
 function readonlyDirectoryMessage(filepath: string): string {
-  return `SQLite could not read ${shownPath(filepath)} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). A database in WAL mode needs its -shm file there even to be read. Check a copy of the database in a folder you can write to.`;
+  return `SQLite could not read ${shownPath(filepath)} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). This happens with a database in WAL mode, which needs its -shm file there even to be read. Copy the database, with its -wal file if there is one, to a folder you can write to and point database.connectionString at the copy.`;
 }
 
 function errorCode(error: unknown): unknown {

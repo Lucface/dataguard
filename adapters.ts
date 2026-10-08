@@ -103,7 +103,7 @@ function rethrowSqliteRead(filepath: string, error: unknown): never {
   if (readStringField(error, 'code') === 'SQLITE_READONLY_DIRECTORY') {
     const shown = pathForMessage(filepath);
     throw new AdapterSetupError(
-      `SQLite could not read ${shown} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). A database in WAL mode needs its -shm file there even to be read. Check a copy of the database in a folder you can write to.`
+      `SQLite could not read ${shown} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). This happens with a database in WAL mode, which needs its -shm file there even to be read. Copy the database, with its -wal file if there is one, to a folder you can write to and point database.connectionString at the copy.`
     );
   }
   throw error;
