@@ -1,7 +1,5 @@
 # Data Quality Tools - Usage Examples
 
-Some checks have known limits. Read [Known limits](README.md#known-limits) before relying on calculated fields, null analysis or business rules.
-
 ## Quick Start
 
 ### 1. CLI Usage (Simplest)

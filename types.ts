@@ -40,7 +40,8 @@ export interface CalculationConfig {
   calculation: 'SUM' | 'COUNT' | 'AVG' | 'MAX' | 'MIN';
   sourceTable: string;
   sourceField: string;
-  joinKey?: string;
+  parentKey?: string; // column in table that sourceTable.joinKey points at (default: id)
+  joinKey?: string; // column in sourceTable that points at table (default: id)
   filter?: string;
   tolerance?: number; // For floating point comparisons
 }

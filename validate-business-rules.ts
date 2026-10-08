@@ -59,21 +59,20 @@ async function validateSingleRule(
 
   try {
     // Build the WHERE clause
-    const whereClause = rule.condition ? `WHERE ${rule.condition}` : '';
+    const whereClause = rule.condition ? `WHERE (${rule.condition})` : '';
 
     // Check required fields
     if (rule.requireFields && rule.requireFields.length > 0) {
       for (const field of rule.requireFields) {
         const query = `
-          SELECT COUNT(*) as count, id
+          SELECT COUNT(*) AS count
           FROM ${rule.table}
           ${whereClause}
             ${rule.condition ? 'AND' : 'WHERE'} ${field} IS NULL
-          LIMIT 10
         `;
 
         const result = await adapter.execute(query);
-        const count = result.rows.length;
+        const count = Number(result.rows[0].count);
 
         if (count > 0) {
           const message = rule.errorMessage ||
@@ -87,15 +86,14 @@ async function validateSingleRule(
     if (rule.forbidFields && rule.forbidFields.length > 0) {
       for (const field of rule.forbidFields) {
         const query = `
-          SELECT COUNT(*) as count, id
+          SELECT COUNT(*) AS count
           FROM ${rule.table}
           ${whereClause}
             ${rule.condition ? 'AND' : 'WHERE'} ${field} IS NOT NULL
-          LIMIT 10
         `;
 
         const result = await adapter.execute(query);
-        const count = result.rows.length;
+        const count = Number(result.rows[0].count);
 
         if (count > 0) {
           const message = rule.errorMessage ||
@@ -162,23 +160,25 @@ export function createValueRangeRule(config: {
   max?: number;
   allowNull?: boolean;
 }): BusinessRuleConfig {
-  const conditions: string[] = [];
-
-  if (config.min !== undefined) {
-    conditions.push(`${config.field} < ${config.min}`);
-  }
-  if (config.max !== undefined) {
-    conditions.push(`${config.field} > ${config.max}`);
-  }
-  if (!config.allowNull) {
-    conditions.push(`${config.field} IS NULL`);
-  }
-
   return {
     name: `${config.table}_${config.field}_range`,
     table: config.table,
-    condition: conditions.join(' OR '),
-    errorMessage: `Field ${config.field} must be between ${config.min} and ${config.max}`
+    customValidator: row => {
+      const value = row[config.field];
+      if (value === null || value === undefined) {
+        return config.allowNull === true;
+      }
+      const n = Number(value);
+      return (config.min === undefined || n >= config.min) &&
+        (config.max === undefined || n <= config.max);
+    },
+    errorMessage: config.min !== undefined
+      ? config.max !== undefined
+        ? `Field ${config.field} must be between ${config.min} and ${config.max}`
+        : `Field ${config.field} must be at least ${config.min}`
+      : config.max !== undefined
+        ? `Field ${config.field} must be at most ${config.max}`
+        : `Field ${config.field} must be set`
   };
 }
 

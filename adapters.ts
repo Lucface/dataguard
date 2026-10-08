@@ -187,8 +187,12 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async execute(query: string): Promise<any> {
-    const rows = this.db.prepare(query).all();
-    return { rows };
+    const stmt = this.db.prepare(query);
+    if (stmt.reader) {
+      return { rows: stmt.all() };
+    }
+    stmt.run();
+    return { rows: [] };
   }
 
   async select(table: string, where?: any): Promise<any[]> {
