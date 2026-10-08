@@ -15,7 +15,7 @@ export { validateBusinessRules, createStageConsistencyRule, createValueRangeRule
 export { generateQualityReport, exportReportHTML, exportReportJSON } from './generate-quality-report';
 
 // Database adapters
-export { createAdapter, NeonAdapter, NeonPoolAdapter, DrizzleAdapter, PostgresAdapter, MySQLAdapter, SQLiteAdapter } from './adapters';
+export { createAdapter, NeonAdapter, NeonPoolAdapter, DrizzleAdapter, PostgresAdapter, MySQLAdapter, SQLiteAdapter, AdapterSetupError } from './adapters';
 
 // Types
 export type {

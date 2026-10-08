@@ -7,6 +7,96 @@
 import type { DatabaseAdapter } from './types';
 
 /**
+ * A setup mistake a person fixes by changing the config or installing a package.
+ * The message is always one line.
+ */
+export class AdapterSetupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdapterSetupError';
+  }
+}
+
+export type DriverLoader = (name: string) => unknown;
+
+const defaultLoader: DriverLoader = name => require(name);
+
+function readStringField(error: unknown, field: 'code' | 'message'): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const value = (error as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function messageQuotesPackage(message: string, name: string): boolean {
+  return message.includes(`'${name}'`) || message.includes(`"${name}"`);
+}
+
+export function loadDriver(name: string, load: DriverLoader = defaultLoader): unknown {
+  try {
+    return load(name);
+  } catch (error) {
+    const code = readStringField(error, 'code');
+    const message = readStringField(error, 'message');
+    const missing = code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND';
+    if (missing && message !== undefined && messageQuotesPackage(message, name)) {
+      throw new AdapterSetupError(
+        `The ${name} package is not installed. Install it with: bun add ${name}`
+      );
+    }
+    throw error;
+  }
+}
+
+function pathForMessage(filepath: string): string {
+  if (filepath === '' || filepath === ':memory:' || filepath.startsWith('file:')) {
+    return filepath;
+  }
+  const path = require('path') as typeof import('path');
+  const resolved = path.resolve(filepath);
+  if (resolved === filepath) return filepath;
+  return `${filepath} (${resolved})`;
+}
+
+function firstLine(text: string): string {
+  const newline = text.indexOf('\n');
+  const line = newline === -1 ? text : text.slice(0, newline);
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+function driverReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return firstLine(text);
+}
+
+function pathIsFolder(filepath: string): boolean {
+  const fs = require('fs') as typeof import('fs');
+  try {
+    return fs.statSync(filepath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function sqliteOpenFailure(filepath: string, error: unknown): AdapterSetupError {
+  const fs = require('fs') as typeof import('fs');
+  const shown = pathForMessage(filepath);
+  const ordinary = filepath !== '' && filepath !== ':memory:' && !filepath.startsWith('file:');
+  if (ordinary && !fs.existsSync(filepath)) {
+    return new AdapterSetupError(
+      `No SQLite database at ${shown}. dataguard opens an existing file read-only and never creates one. Check database.connectionString.`
+    );
+  }
+  if (pathIsFolder(filepath)) {
+    return new AdapterSetupError(
+      `${shown} is a folder. database.connectionString must be the path to a SQLite database file.`
+    );
+  }
+  return new AdapterSetupError(
+    `Could not open the SQLite database at ${shown}. The driver said: ${driverReason(error)}`
+  );
+}
+
+/**
  * Neon Serverless Adapter (PostgreSQL)
  */
 export class NeonAdapter implements DatabaseAdapter {
@@ -109,11 +199,15 @@ export class DrizzleAdapter implements DatabaseAdapter {
 /**
  * PostgreSQL (pg) Adapter
  */
+interface PgDriver {
+  Pool: new (config: { connectionString: string }) => object;
+}
+
 export class PostgresAdapter implements DatabaseAdapter {
   private pool: any;
 
-  constructor(connectionString: string) {
-    const { Pool } = require('pg');
+  constructor(connectionString: string, load: DriverLoader = defaultLoader) {
+    const { Pool } = loadDriver('pg', load) as PgDriver;
     this.pool = new Pool({ connectionString });
   }
 
@@ -175,15 +269,37 @@ export class MySQLAdapter implements DatabaseAdapter {
   }
 }
 
+interface SqliteStatement {
+  reader: boolean;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): unknown;
+}
+
+interface SqliteHandle {
+  prepare(query: string): SqliteStatement;
+  close(): void;
+}
+
+interface SqliteOpenOptions {
+  readonly: boolean;
+  fileMustExist: boolean;
+}
+
+type SqliteOpen = (filename: string, options: SqliteOpenOptions) => SqliteHandle;
+
 /**
  * SQLite Adapter
  */
 export class SQLiteAdapter implements DatabaseAdapter {
-  private db: any;
+  private db: SqliteHandle;
 
-  constructor(filepath: string) {
-    const sqlite3 = require('better-sqlite3');
-    this.db = sqlite3(filepath);
+  constructor(filepath: string, load: DriverLoader = defaultLoader) {
+    const open = loadDriver('better-sqlite3', load) as SqliteOpen;
+    try {
+      this.db = open(filepath, { readonly: true, fileMustExist: true });
+    } catch (error) {
+      throw sqliteOpenFailure(filepath, error);
+    }
   }
 
   async execute(query: string): Promise<any> {
@@ -223,30 +339,30 @@ export function createAdapter(config: {
 }): DatabaseAdapter {
   switch (config.type) {
     case 'neon':
-      if (!config.connectionString) throw new Error('Connection string required for Neon');
+      if (!config.connectionString) throw new AdapterSetupError('Connection string required for Neon');
       return new NeonAdapter(config.connectionString);
 
     case 'neon-pool':
-      if (!config.connectionString) throw new Error('Connection string required for Neon Pool');
+      if (!config.connectionString) throw new AdapterSetupError('Connection string required for Neon Pool');
       return new NeonPoolAdapter(config.connectionString);
 
     case 'drizzle':
-      if (!config.db) throw new Error('Drizzle db instance required');
+      if (!config.db) throw new AdapterSetupError('Drizzle db instance required');
       return new DrizzleAdapter(config.db);
 
     case 'postgres':
-      if (!config.connectionString) throw new Error('Connection string required for PostgreSQL');
+      if (!config.connectionString) throw new AdapterSetupError('Connection string required for PostgreSQL');
       return new PostgresAdapter(config.connectionString);
 
     case 'mysql':
-      if (!config.connectionConfig) throw new Error('Connection config required for MySQL');
+      if (!config.connectionConfig) throw new AdapterSetupError('Connection config required for MySQL');
       return new MySQLAdapter(config.connectionConfig);
 
     case 'sqlite':
-      if (!config.connectionString) throw new Error('Filepath required for SQLite');
+      if (!config.connectionString) throw new AdapterSetupError('Filepath required for SQLite');
       return new SQLiteAdapter(config.connectionString);
 
     default:
-      throw new Error(`Unsupported database type: ${config.type}`);
+      throw new AdapterSetupError(`Unsupported database type: ${config.type}`);
   }
 }
