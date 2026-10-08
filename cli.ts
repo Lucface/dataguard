@@ -14,7 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { DataQualityConfig } from './types';
-import { createAdapter } from './adapters';
+import { AdapterSetupError, createAdapter } from './adapters';
 import { generateQualityReport, exportReportHTML, exportReportJSON } from './generate-quality-report';
 
 interface CLIOptions {
@@ -101,6 +101,13 @@ Available Validations:
 `);
 }
 
+class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
 async function loadConfig(configPath?: string): Promise<DataQualityConfig> {
   const defaultPaths = [
     'data-quality-config.json',
@@ -118,14 +125,26 @@ async function loadConfig(configPath?: string): Promise<DataQualityConfig> {
       // Replace environment variable placeholders
       if (config.database.connectionString?.startsWith('process.env.')) {
         const envVar = config.database.connectionString.replace('process.env.', '');
-        config.database.connectionString = process.env[envVar];
+        const value = process.env[envVar];
+        if (value === undefined || value === '') {
+          throw new ConfigError(
+            `The config reads the connection string from the environment variable ${envVar}, which is not set. Set it and run again.`
+          );
+        }
+        config.database.connectionString = value;
       }
 
       return config;
     }
   }
 
-  throw new Error('No configuration file found. Please create data-quality-config.json');
+  if (configPath) {
+    throw new ConfigError(`Config file not found: ${configPath}`);
+  }
+
+  throw new ConfigError(
+    'No config file found. Looked for data-quality-config.json, config/data-quality.json and .claude/data-quality-config.json. Pass one with --config.'
+  );
 }
 
 async function run(): Promise<void> {
@@ -207,7 +226,11 @@ async function run(): Promise<void> {
     process.exit(exitCode);
 
   } catch (error) {
-    console.error('\n❌ Error:', error);
+    if (error instanceof AdapterSetupError || error instanceof ConfigError) {
+      console.error(`\n❌ Error: ${error.message}`);
+    } else {
+      console.error('\n❌ Error:', error);
+    }
     process.exit(1);
   }
 }

@@ -23,6 +23,39 @@ bunx tsx cli.ts --config example-config.json
 
 `example-config.json` uses the `neon` adapter and reads the connection string from the `DATABASE_URL` environment variable. Its table and column names are examples: change them to your schema.
 
+A run ends on its own. To stop one early, press Ctrl+C. There is nothing to undo in the database afterwards, because dataguard only reads it.
+
+## What it reads and what it writes
+
+Every check only reads. Every statement dataguard builds is a `SELECT` (one helper puts a `WITH` clause in front of its `SELECT`). No check adds, changes or removes a row.
+
+**SQLite.** The file is opened read-only and must already exist. A statement that writes is refused by SQLite with `attempt to write a readonly database`, and that includes one of your own sent through `adapter.execute`. A run leaves the database file byte for byte as it was. If the database is in WAL mode, SQLite creates its `-wal` and `-shm` files next to it while reading and leaves them there; the database file itself still does not change. In a folder dataguard cannot write to, SQLite cannot read a WAL database at all. Each check then reports `SQLite could not read <path> because it cannot write in that folder (SQLITE_READONLY_DIRECTORY)`, and the way through is to copy the database, with its `-wal` file if there is one, to a folder you can write to and point `database.connectionString` at the copy.
+
+**PostgreSQL and Neon.** dataguard sends the same `SELECT` statements, but nothing in dataguard stops a write there: the connection can do whatever its role can. The table names, column names, `condition` and `filter` in your config are put into those statements as written. Treat a config file like code, and connect with a role that can only read. On PostgreSQL 14 or newer:
+
+```sql
+CREATE ROLE dataguard_reader LOGIN;
+GRANT pg_read_all_data TO dataguard_reader;
+```
+
+Give that role a password (`\password dataguard_reader` in psql) and use it in the connection string.
+
+**Files.** The only file dataguard writes is the report you name with `--output`. A file already at that path is replaced.
+
+## When it stops before the checks
+
+A setup mistake ends in one line and exit code 1. Nothing has been read from the database at that point.
+
+| It prints | What to do |
+|---|---|
+| `No SQLite database at <path>. dataguard opens existing files read-only. Check database.connectionString.` | Fix the path in `database.connectionString`. A relative path is shown with the full path it resolved to. No file was created. |
+| `The better-sqlite3 package is not installed. Install it with: bun add better-sqlite3` (the same line names `pg`, `ws` or `mysql2` when that is the one missing) | Run that command in the dataguard folder, then run dataguard again. |
+| `The config reads the connection string from the environment variable DATABASE_URL, which is not set. Set it and run again.` | Set the variable in your shell, then run again. |
+| `Config file not found: <path>` | Pass the right path with `--config`. |
+| `No config file found. Looked for data-quality-config.json, config/data-quality.json and .claude/data-quality-config.json. Pass one with --config.` | Create one of those files, or pass `--config`. |
+
+A check whose own query fails, for example on a table that does not exist, puts the database's error on a line of the report, and the other checks still run.
+
 ## Tools
 
 Every example below uses an adapter made like this:
@@ -186,11 +219,11 @@ await adapter.disconnect();
 |---|---|---|
 | `neon` | Neon Serverless (PostgreSQL) | included |
 | `postgres` | PostgreSQL | included (`pg`) |
-| `sqlite` | SQLite, `connectionString` is the path to the file | included (`better-sqlite3`) |
+| `sqlite` | SQLite, `connectionString` is the path to an existing file, opened read-only | included (`better-sqlite3`) |
 
-`pg` and `better-sqlite3` are optional dependencies: if one cannot install on your machine, `bun install` skips it and the other databases still work.
+`pg` and `better-sqlite3` are optional dependencies: if one cannot install on your machine, `bun install` skips it and the other databases still work. When a config asks for the one that is missing, dataguard says so in one line with the command that installs it.
 
-From code, `createAdapter` also accepts `neon-pool` (needs `ws`), `mysql` (needs `mysql2` and a `connectionConfig` object) and `drizzle` (pass your Drizzle `db`). The CLI passes only `connectionString`, so it cannot open a MySQL or Drizzle connection.
+From code, `createAdapter` also accepts `neon-pool` (needs `ws`), `mysql` (needs `mysql2` and a `connectionConfig` object) and `drizzle` (pass your Drizzle `db`). The CLI passes only `connectionString`, so it cannot open a MySQL or Drizzle connection. A setup mistake (a wrong SQLite path, a missing driver, a missing connection string) is thrown as `AdapterSetupError`, which `./index` exports.
 
 ## Configuration
 

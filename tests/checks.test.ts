@@ -475,13 +475,17 @@ for (const type of ['sqlite', 'postgres'] as const) {
 
     if (type === 'sqlite') {
       it('executes statements without result rows', async () => {
-        // source: 2026-10-06 measurement, SQLite .all() threw for CREATE TABLE statements.
-        let result!: Awaited<ReturnType<DatabaseAdapter['execute']>>;
+        // source: read-only SQLite runs BEGIN and ROLLBACK, which return no rows (.all() throws "This statement does not return data").
+        let begin!: Awaited<ReturnType<DatabaseAdapter['execute']>>;
         await assert.doesNotReject(async () => {
-          result = await adapter.execute('CREATE TABLE scratch (id INTEGER)');
+          begin = await adapter.execute('BEGIN');
         });
-        assert.deepEqual(result.rows, []);
-        assert.deepEqual((await adapter.execute('SELECT id FROM scratch')).rows, []);
+        assert.deepEqual(begin, { rows: [] });
+        let rollback!: Awaited<ReturnType<DatabaseAdapter['execute']>>;
+        await assert.doesNotReject(async () => {
+          rollback = await adapter.execute('ROLLBACK');
+        });
+        assert.deepEqual(rollback, { rows: [] });
       });
     }
   });
