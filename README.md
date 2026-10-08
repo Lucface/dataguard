@@ -6,7 +6,35 @@ Generic, reusable data quality validation tools extracted from the AcmeCRM proje
 
 This directory contains schema-agnostic data quality validation utilities that can be adapted to any database project. These tools were originally developed for the AcmeCRM but have been generalized for broader use.
 
+## Quick start
+
+```bash
+git clone https://github.com/Lucface/dataguard.git
+cd dataguard
+bun install
+bunx tsx cli.ts --help
+```
+
+Then copy `example-config.json`, point it at your database (see [Database Adapters](#database-adapters)) and run:
+
+```bash
+bunx tsx cli.ts --config example-config.json
+```
+
+`example-config.json` uses the `neon` adapter and reads the connection string from the `DATABASE_URL` environment variable. Its table and column names are examples: change them to your schema.
+
 ## Tools
+
+Every example below uses an adapter made like this:
+
+```typescript
+import { createAdapter } from './index';
+
+const adapter = createAdapter({
+  type: 'postgres',
+  connectionString: process.env.DATABASE_URL!
+});
+```
 
 ### 1. `validate-referential-integrity.ts`
 **Purpose:** Checks for orphaned records and broken foreign key relationships
@@ -14,20 +42,19 @@ This directory contains schema-agnostic data quality validation utilities that c
 **Features:**
 - Detects orphaned child records
 - Validates foreign key references
-- Works with any table relationships
+- Works with any table relationships whose parent key column is named `id`
 
 **Usage:**
 ```typescript
-import { validateReferentialIntegrity } from './validate-referential-integrity';
+import { validateReferentialIntegrity } from './index';
 
-const config = {
+const result = await validateReferentialIntegrity({
+  adapter,
   relationships: [
     { child: 'project_tasks', parent: 'projects', foreignKey: 'project_id' },
     { child: 'invoices', parent: 'projects', foreignKey: 'project_id' }
   ]
-};
-
-await validateReferentialIntegrity(db, config);
+});
 ```
 
 ### 2. `validate-date-sequences.ts`
@@ -35,38 +62,37 @@ await validateReferentialIntegrity(db, config);
 
 **Features:**
 - Ensures start dates precede end dates
-- Validates sequential date progressions
-- Checks for future dates where inappropriate
+- Validates sequential date progressions (`validateSequentialProgression`)
 - Validates business workflow dates (e.g., invoiced before paid)
 
 **Usage:**
 ```typescript
-import { validateDateSequences } from './validate-date-sequences';
+import { validateDateSequences } from './index';
 
-const config = {
-  dateRules: [
+const result = await validateDateSequences({
+  adapter,
+  rules: [
     { table: 'projects', before: 'start_date', after: 'delivery_date' },
     { table: 'payment_milestones', before: 'invoiced_date', after: 'paid_date' }
   ]
-};
-
-await validateDateSequences(db, config);
+});
 ```
 
 ### 3. `validate-calculated-fields.ts`
 **Purpose:** Ensures calculated/derived fields match their source data
 
 **Features:**
-- Validates aggregation accuracy (SUM, COUNT, AVG)
-- Checks percentage calculations
-- Verifies derived metrics
+- Validates aggregation accuracy (SUM, COUNT, AVG, MAX, MIN)
+- Checks percentage calculations (`validatePercentageSum`)
+- Checks value ranges (`validateProgressRange`, `validateDerivedNotExceedsBase`)
 - Detects calculation mismatches
 
 **Usage:**
 ```typescript
-import { validateCalculatedFields } from './validate-calculated-fields';
+import { validateCalculatedFields } from './index';
 
-const config = {
+const result = await validateCalculatedFields({
+  adapter,
   calculations: [
     {
       table: 'projects',
@@ -77,10 +103,10 @@ const config = {
       joinKey: 'project_id'
     }
   ]
-};
-
-await validateCalculatedFields(db, config);
+});
 ```
+
+`joinKey` must be a column that exists under the same name in both tables. See [Known limits](#known-limits).
 
 ### 4. `analyze-nulls.ts`
 **Purpose:** Analyzes null/empty field patterns and completeness
@@ -89,21 +115,19 @@ await validateCalculatedFields(db, config);
 - Counts null/empty values per field
 - Calculates data completeness percentages
 - Identifies required fields with missing data
-- Suggests fields that should have defaults
+- Suggests a default from the most common value (`suggestDefaults`)
 
 **Usage:**
 ```typescript
-import { analyzeNulls } from './analyze-nulls';
+import { analyzeNulls } from './index';
 
-const config = {
+const result = await analyzeNulls(adapter, {
   tables: ['projects', 'contacts', 'invoices'],
   requiredFields: {
     projects: ['name', 'client', 'budget'],
     contacts: ['email', 'company']
   }
-};
-
-await analyzeNulls(db, config);
+});
 ```
 
 ### 5. `validate-business-rules.ts`
@@ -112,14 +136,15 @@ await analyzeNulls(db, config);
 **Features:**
 - Configurable business rule validation
 - Stage/status consistency checks
-- Value range validation
-- Custom validation functions
+- Allowed values and uniqueness (`validateEnumValues`, `validateUniqueness`)
+- Custom validation functions (from code, not from a JSON config)
 
 **Usage:**
 ```typescript
-import { validateBusinessRules } from './validate-business-rules';
+import { validateBusinessRules } from './index';
 
-const config = {
+const result = await validateBusinessRules({
+  adapter,
   rules: [
     {
       name: 'completed_projects_need_dates',
@@ -128,40 +153,41 @@ const config = {
       requireFields: ['completed_date']
     }
   ]
-};
-
-await validateBusinessRules(db, config);
+});
 ```
 
 ### 6. `generate-quality-report.ts`
 **Purpose:** Comprehensive data quality assessment with scoring
 
 **Features:**
-- Runs all validation checks
+- Runs all validation checks enabled in the config
 - Generates quality score (0-100)
-- Produces detailed HTML/JSON reports
-- Tracks quality trends over time
+- Produces HTML/JSON reports
 
 **Usage:**
 ```typescript
-import { generateQualityReport } from './generate-quality-report';
+import * as fs from 'fs';
+import { generateQualityReport, exportReportHTML } from './index';
 
-const report = await generateQualityReport(db, {
-  includeWarnings: true,
-  outputFormat: 'html',
-  outputPath: './reports/data-quality-report.html'
-});
+const config = JSON.parse(fs.readFileSync('example-config.json', 'utf-8'));
+const report = await generateQualityReport(adapter, config);
+exportReportHTML(report, 'report.html');
 
 console.log(`Quality Score: ${report.score}%`);
+await adapter.disconnect();
 ```
 
 ## Database Adapters
 
-These tools support multiple database backends through adapters:
+`bun install` brings the Neon driver. The other databases need their driver added once:
 
-- **Neon Serverless** (PostgreSQL)
-- **Drizzle ORM**
-- **Raw SQL** (PostgreSQL, MySQL, SQLite)
+| `database.type` | Database | Driver |
+|---|---|---|
+| `neon` | Neon Serverless (PostgreSQL) | included |
+| `postgres` | PostgreSQL | `bun add pg` |
+| `sqlite` | SQLite, `connectionString` is the path to the file | `bun add better-sqlite3` |
+
+From code, `createAdapter` also accepts `neon-pool` (needs `ws`), `mysql` (needs `mysql2` and a `connectionConfig` object) and `drizzle` (pass your Drizzle `db`). The CLI passes only `connectionString`, so it cannot open a MySQL or Drizzle connection.
 
 ## Configuration
 
@@ -192,29 +218,46 @@ Create a `data-quality-config.json` in your project:
       "field": "total_spent",
       "calculation": "SUM",
       "sourceTable": "expenses",
-      "sourceField": "amount"
+      "sourceField": "amount",
+      "joinKey": "project_id"
+    }
+  ],
+  "nullAnalysis": {
+    "tables": ["projects"],
+    "requiredFields": { "projects": ["name"] }
+  },
+  "businessRules": [
+    {
+      "name": "completed_projects_need_dates",
+      "table": "projects",
+      "condition": "stage = 'Completed'",
+      "requireFields": ["completed_date"]
     }
   ]
 }
 ```
 
+A check runs only when it is switched on under `validations` and its own section is present. A `connectionString` written as `process.env.NAME` is replaced with that environment variable.
+
 ## CLI Usage
 
-Run validations from the command line:
+Run validations from the command line. Without `--config` the CLI looks for `data-quality-config.json`, then `config/data-quality.json`, then `.claude/data-quality-config.json`.
 
 ```bash
 # Run all validations
-npx tsx ~/.claude/scripts/data-quality/run-validations.ts
+bunx tsx cli.ts --config example-config.json
 
 # Run specific validation
-npx tsx ~/.claude/scripts/data-quality/run-validations.ts --only referential-integrity
+bunx tsx cli.ts --config example-config.json --only referential-integrity
 
 # Generate report
-npx tsx ~/.claude/scripts/data-quality/generate-quality-report.ts --output report.html
+bunx tsx cli.ts --config example-config.json --output report.html
 
-# Quick check
-npx tsx ~/.claude/scripts/data-quality/quick-check.ts
+# Show every option
+bunx tsx cli.ts --help
 ```
+
+`--only` takes `referential-integrity`, `date-sequences`, `calculated-fields`, `null-analysis` or `business-rules`. `--output` writes HTML or JSON by file extension. The exit code is 1 when any check fails and 0 when all pass.
 
 ## Integration with CI/CD
 
@@ -230,28 +273,44 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
       - name: Run data quality checks
         run: |
           bun install
-          bun x tsx ~/.claude/scripts/data-quality/run-validations.ts
+          bunx tsx cli.ts --config example-config.json
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
+
+## Known limits
+
+Measured on 2026-10-06 against PostgreSQL 17 and SQLite with a made-up sample.
+
+- **Calculated fields** join the two tables on one column name (`joinKey`) used on both sides. A parent keyed by `id` with children keyed by `project_id` fails with "column does not exist". The `filter` option is not applied.
+- **Business rules** with `requireFields` or `forbidFields` fail on PostgreSQL with a GROUP BY error. On SQLite each one reports a violation whether or not a row breaks the rule.
+- **Null analysis** fails on PostgreSQL when a table has a column that is not text. On SQLite it cannot read the column list and reports that all checks passed.
+- **Date rules**: `allowEqual` works backwards. Equal dates are flagged when it is `true` and accepted when it is `false` or left out.
+- A rule made by `createValueRangeRule` is never evaluated.
+
+Referential integrity and date order (without `allowEqual`) return correct results on both databases. To get a report made only of those two, set `calculatedFields`, `nullAnalysis` and `businessRules` to `false` under `validations`, as [QUICK-START.md](QUICK-START.md) does.
 
 ## Extending the Tools
 
 ### Add Custom Validators
 
+A check is a function that takes the adapter and returns a `ValidationResult`. Call it next to the built-in ones.
+
 ```typescript
 // my-custom-validator.ts
-import { ValidationResult } from './types';
+import type { ValidationResult, DatabaseAdapter } from './types';
 
-export async function validateCustomRule(db: any, config: any): Promise<ValidationResult> {
+export async function validateCustomRule(adapter: DatabaseAdapter): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Your custom validation logic here
+  // Your custom validation logic here, for example:
+  // const result = await adapter.execute('SELECT ...');
 
   return {
     passed: errors.length === 0,
@@ -261,19 +320,10 @@ export async function validateCustomRule(db: any, config: any): Promise<Validati
 }
 ```
 
-### Register Custom Validators
-
-```typescript
-import { registerValidator } from './registry';
-import { validateCustomRule } from './my-custom-validator';
-
-registerValidator('custom-rule', validateCustomRule);
-```
-
 ## Best Practices
 
 1. **Run regularly:** Schedule automated quality checks
-2. **Track trends:** Monitor quality scores over time
+2. **Track trends:** Save reports and compare scores over time
 3. **Fix incrementally:** Address high-priority issues first
 4. **Document exceptions:** When business rules are intentionally violated
 5. **Version configurations:** Track validation rules in version control
@@ -286,6 +336,8 @@ Quality score calculation:
 - **Calculated Fields:** 25 points
 - **Data Completeness:** 15 points
 - **Business Rules:** 15 points
+
+Only the checks that ran count toward the score. A failed check keeps part of its points: it loses 10% per error line, up to half.
 
 Grades:
 - 90-100: Excellent
