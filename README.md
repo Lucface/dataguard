@@ -29,7 +29,7 @@ A run ends on its own. To stop one early, press Ctrl+C. There is nothing to undo
 
 Every check only reads. Every statement dataguard builds is a `SELECT` (one helper puts a `WITH` clause in front of its `SELECT`). No check adds, changes or removes a row.
 
-**SQLite.** The file is opened read-only and must already exist. A statement that writes is refused by SQLite with `attempt to write a readonly database`, and that includes one of your own sent through `adapter.execute`. A run leaves the database file byte for byte as it was. If the database is in WAL mode, SQLite creates its `-wal` and `-shm` files next to it while reading and leaves them there, so the folder must be writable; the database file itself still does not change.
+**SQLite.** The file is opened read-only and must already exist. A statement that writes is refused by SQLite with `attempt to write a readonly database`, and that includes one of your own sent through `adapter.execute`. A run leaves the database file byte for byte as it was. If the database is in WAL mode, SQLite creates its `-wal` and `-shm` files next to it while reading and leaves them there; the database file itself still does not change. In a folder dataguard cannot write to, SQLite cannot read a WAL database at all. Each check then reports `SQLite could not read <path> because it cannot write in that folder (SQLITE_READONLY_DIRECTORY)`, and the way through is to check a copy of the database in a folder you can write to.
 
 **PostgreSQL and Neon.** dataguard sends the same `SELECT` statements, but nothing in dataguard stops a write there: the connection can do whatever its role can. The table names, column names, `condition` and `filter` in your config are put into those statements as written. Treat a config file like code, and connect with a role that can only read. On PostgreSQL 14 or newer:
 
@@ -48,8 +48,8 @@ A setup mistake ends in one line and exit code 1. Nothing has been read from the
 
 | It prints | What to do |
 |---|---|
-| `No SQLite database at <path>. dataguard opens an existing file read-only and never creates one. Check database.connectionString.` | Fix the path in `database.connectionString`. A relative path is shown with the full path it resolved to. No file was created. |
-| `The better-sqlite3 package is not installed. Install it with: bun add better-sqlite3` (the same line names `pg` for PostgreSQL) | Run that command in the dataguard folder, then run dataguard again. |
+| `No SQLite database at <path>. dataguard opens existing files read-only. Check database.connectionString.` | Fix the path in `database.connectionString`. A relative path is shown with the full path it resolved to. No file was created. |
+| `The better-sqlite3 package is not installed. Install it with: bun add better-sqlite3` (the same line names `pg`, `ws` or `mysql2` when that is the one missing) | Run that command in the dataguard folder, then run dataguard again. |
 | `The config reads the connection string from the environment variable DATABASE_URL, which is not set. Set it and run again.` | Set the variable in your shell, then run again. |
 | `Config file not found: <path>` | Pass the right path with `--config`. |
 | `No config file found. Looked for data-quality-config.json, config/data-quality.json and .claude/data-quality-config.json. Pass one with --config.` | Create one of those files, or pass `--config`. |

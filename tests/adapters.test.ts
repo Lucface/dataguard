@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import {
   AdapterSetupError,
+  MySQLAdapter,
+  NeonPoolAdapter,
   PostgresAdapter,
   SQLiteAdapter,
   createAdapter,
@@ -28,7 +30,11 @@ function shownPath(filepath: string): string {
 }
 
 function missingDatabaseMessage(filepath: string): string {
-  return `No SQLite database at ${shownPath(filepath)}. dataguard opens an existing file read-only and never creates one. Check database.connectionString.`;
+  return `No SQLite database at ${shownPath(filepath)}. dataguard opens existing files read-only. Check database.connectionString.`;
+}
+
+function readonlyDirectoryMessage(filepath: string): string {
+  return `SQLite could not read ${shownPath(filepath)} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). A database in WAL mode needs its -shm file there even to be read. Check a copy of the database in a folder you can write to.`;
 }
 
 function errorCode(error: unknown): unknown {
@@ -154,6 +160,48 @@ describe('adapter setup', { concurrency: false }, () => {
     assert.deepEqual(readdirSync(directory), ['sample.db']);
   });
 
+  it('a WAL database in a folder that cannot be written to says so', async (t) => {
+    // source: measured 2026-10-08, the first read failed with "attempt to write a readonly database", which reads as if dataguard had tried to write.
+    if (process.platform === 'win32') {
+      t.skip('Windows does not enforce the folder mode');
+      return;
+    }
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+      t.skip('running as root does not enforce the folder mode');
+      return;
+    }
+    const directory = makeTemp();
+    const dbPath = join(directory, 'sample.db');
+    const db = new Database(dbPath);
+    try {
+      db.pragma('journal_mode = WAL');
+      db.exec(sample);
+    } finally {
+      db.close();
+    }
+    chmodSync(directory, 0o555);
+    try {
+      const adapter = createAdapter({ type: 'sqlite', connectionString: dbPath });
+      const message = readonlyDirectoryMessage(dbPath);
+      try {
+        await assert.rejects(adapter.execute('SELECT COUNT(*) AS count FROM contacts'), (error: unknown) => {
+          assert.ok(error instanceof AdapterSetupError);
+          assert.equal(error.message, message);
+          return true;
+        });
+        await assert.rejects(adapter.select('contacts'), (error: unknown) => {
+          assert.ok(error instanceof AdapterSetupError);
+          assert.equal(error.message, message);
+          return true;
+        });
+      } finally {
+        await adapter.disconnect();
+      }
+    } finally {
+      chmodSync(directory, 0o755);
+    }
+  });
+
   it('a missing better-sqlite3 says how to install it', () => {
     // source: better-sqlite3 is an optional dependency and bun install may skip it.
     const loader = () => {
@@ -193,6 +241,47 @@ describe('adapter setup', { concurrency: false }, () => {
         return true;
       }
     );
+  });
+
+  it('a missing ws says how to install it', () => {
+    // source: ws is not a dependency of this package and was loaded with a bare require.
+    const loader = () => {
+      throw Object.assign(
+        new Error("Cannot find module 'ws'\nRequire stack:\n- /x/adapters.ts"),
+        { code: 'MODULE_NOT_FOUND' }
+      );
+    };
+    assert.throws(
+      () => new NeonPoolAdapter('postgresql://localhost/none', loader),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterSetupError);
+        assert.equal(error.message, 'The ws package is not installed. Install it with: bun add ws');
+        assert.equal(error.message.includes('\n'), false);
+        return true;
+      }
+    );
+  });
+
+  it('a missing mysql2 says how to install it', () => {
+    // source: mysql2 is not a dependency of this package and was loaded with a bare require.
+    const requested: string[] = [];
+    const loader = (moduleId: string) => {
+      requested.push(moduleId);
+      throw Object.assign(
+        new Error("Cannot find module 'mysql2/promise'\nRequire stack:\n- /x/adapters.ts"),
+        { code: 'MODULE_NOT_FOUND' }
+      );
+    };
+    assert.throws(
+      () => new MySQLAdapter({}, loader),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterSetupError);
+        assert.equal(error.message, 'The mysql2 package is not installed. Install it with: bun add mysql2');
+        assert.equal(error.message.includes('\n'), false);
+        return true;
+      }
+    );
+    assert.deepEqual(requested, ['mysql2/promise']);
   });
 
   it('a missing package is recognized from the real loader', () => {

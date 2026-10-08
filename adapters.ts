@@ -31,14 +31,17 @@ function messageQuotesPackage(message: string, name: string): boolean {
   return message.includes(`'${name}'`) || message.includes(`"${name}"`);
 }
 
-export function loadDriver(name: string, load: DriverLoader = defaultLoader): unknown {
+export function loadDriver(name: string, load: DriverLoader = defaultLoader, moduleId: string = name): unknown {
   try {
-    return load(name);
+    return load(moduleId);
   } catch (error) {
     const code = readStringField(error, 'code');
     const message = readStringField(error, 'message');
     const missing = code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND';
-    if (missing && message !== undefined && messageQuotesPackage(message, name)) {
+    const quoted = message !== undefined && (
+      messageQuotesPackage(message, moduleId) || messageQuotesPackage(message, name)
+    );
+    if (missing && quoted) {
       throw new AdapterSetupError(
         `The ${name} package is not installed. Install it with: bun add ${name}`
       );
@@ -83,7 +86,7 @@ function sqliteOpenFailure(filepath: string, error: unknown): AdapterSetupError 
   const ordinary = filepath !== '' && filepath !== ':memory:' && !filepath.startsWith('file:');
   if (ordinary && !fs.existsSync(filepath)) {
     return new AdapterSetupError(
-      `No SQLite database at ${shown}. dataguard opens an existing file read-only and never creates one. Check database.connectionString.`
+      `No SQLite database at ${shown}. dataguard opens existing files read-only. Check database.connectionString.`
     );
   }
   if (pathIsFolder(filepath)) {
@@ -94,6 +97,16 @@ function sqliteOpenFailure(filepath: string, error: unknown): AdapterSetupError 
   return new AdapterSetupError(
     `Could not open the SQLite database at ${shown}. The driver said: ${driverReason(error)}`
   );
+}
+
+function rethrowSqliteRead(filepath: string, error: unknown): never {
+  if (readStringField(error, 'code') === 'SQLITE_READONLY_DIRECTORY') {
+    const shown = pathForMessage(filepath);
+    throw new AdapterSetupError(
+      `SQLite could not read ${shown} because it cannot write in that folder (SQLITE_READONLY_DIRECTORY). A database in WAL mode needs its -shm file there even to be read. Check a copy of the database in a folder you can write to.`
+    );
+  }
+  throw error;
 }
 
 /**
@@ -136,9 +149,9 @@ export class NeonAdapter implements DatabaseAdapter {
 export class NeonPoolAdapter implements DatabaseAdapter {
   private pool: any;
 
-  constructor(connectionString: string) {
+  constructor(connectionString: string, load: DriverLoader = defaultLoader) {
     const { Pool } = require('@neondatabase/serverless');
-    const ws = require('ws');
+    const ws = loadDriver('ws', load);
     const { neonConfig } = require('@neondatabase/serverless');
 
     neonConfig.webSocketConstructor = ws;
@@ -237,11 +250,15 @@ export class PostgresAdapter implements DatabaseAdapter {
 /**
  * MySQL Adapter
  */
+interface MysqlDriver {
+  createPool(config: unknown): object;
+}
+
 export class MySQLAdapter implements DatabaseAdapter {
   private pool: any;
 
-  constructor(connectionConfig: any) {
-    const mysql = require('mysql2/promise');
+  constructor(connectionConfig: any, load: DriverLoader = defaultLoader) {
+    const mysql = loadDriver('mysql2', load, 'mysql2/promise') as MysqlDriver;
     this.pool = mysql.createPool(connectionConfig);
   }
 
@@ -292,8 +309,10 @@ type SqliteOpen = (filename: string, options: SqliteOpenOptions) => SqliteHandle
  */
 export class SQLiteAdapter implements DatabaseAdapter {
   private db: SqliteHandle;
+  private filepath: string;
 
   constructor(filepath: string, load: DriverLoader = defaultLoader) {
+    this.filepath = filepath;
     const open = loadDriver('better-sqlite3', load) as SqliteOpen;
     try {
       this.db = open(filepath, { readonly: true, fileMustExist: true });
@@ -303,24 +322,32 @@ export class SQLiteAdapter implements DatabaseAdapter {
   }
 
   async execute(query: string): Promise<any> {
-    const stmt = this.db.prepare(query);
-    if (stmt.reader) {
-      return { rows: stmt.all() };
+    try {
+      const stmt = this.db.prepare(query);
+      if (stmt.reader) {
+        return { rows: stmt.all() };
+      }
+      stmt.run();
+      return { rows: [] };
+    } catch (error) {
+      rethrowSqliteRead(this.filepath, error);
     }
-    stmt.run();
-    return { rows: [] };
   }
 
   async select(table: string, where?: any): Promise<any[]> {
-    let query = `SELECT * FROM ${table}`;
-    if (where) {
-      const conditions = Object.entries(where)
-        .map(([key]) => `${key} = ?`)
-        .join(' AND ');
-      query += ` WHERE ${conditions}`;
-      return this.db.prepare(query).all(...Object.values(where));
+    try {
+      let query = `SELECT * FROM ${table}`;
+      if (where) {
+        const conditions = Object.entries(where)
+          .map(([key]) => `${key} = ?`)
+          .join(' AND ');
+        query += ` WHERE ${conditions}`;
+        return this.db.prepare(query).all(...Object.values(where));
+      }
+      return this.db.prepare(query).all();
+    } catch (error) {
+      rethrowSqliteRead(this.filepath, error);
     }
-    return this.db.prepare(query).all();
   }
 
   async disconnect(): Promise<void> {
